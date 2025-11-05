@@ -4,12 +4,25 @@ import cookieParser from "cookie-parser"
 
 const app = express()
 
- 
+import dotenv from 'dotenv';
+dotenv.config();
+
+const allowedOrigins = process.env.CORS_ORIGIN?.split(",") || [];
 
 app.use(cors({
-    origin: [process.env.CORS_ORIGIN],
-    credentials: true
-}))
+  origin: function (origin, callback) {
+    // Allow requests if:
+    // - Origin is in the allowed list
+    // - OR origin is undefined (like Postman or curl)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS Not Allowed"));
+    }
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  credentials: true,
+}));
 
 app.use(express.json({limit:'16kb'}))
 app.use(express.urlencoded({extended:true,limit:'16kb'}))
