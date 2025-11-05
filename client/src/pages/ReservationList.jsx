@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import Navbar from '../components/Navbar'
 import Footer from '../components/Footer'
-import Loader from '../components/Loader'
 import ListingCard from '../components/ListingCard'
+import Loader from '../components/Loader'
+import Navbar from '../components/Navbar'
 import { setReservationList } from '../redux/state'
 import api from '../utils/api'
 
@@ -16,7 +16,7 @@ const ReservationList = () => {
   const getReservationList = async () => {
     if (!userId) return
     try {
-      const { data } = await api.get(`/users/${username}/reservations`)
+      const { data } = await api.get(`/users/${userId}/reservations`)
       // accept {data: [...] } or [...] directly
       dispatch(setReservationList(data?.data || data))
     } catch (err) {
