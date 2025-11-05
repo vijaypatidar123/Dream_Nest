@@ -1,45 +1,60 @@
-import fs from 'fs/promises'
 import mongoose from 'mongoose'
 import { asyncHandler } from '../utils/asyncHandler.js'
 import { ApiError } from '../utils/ApiError.js'
 import { ApiResponse } from '../utils/ApiResponse.js'
 import { Listing } from '../models/listing.model.js'
 import { uploadOnCloudinary } from '../utils/cloudinary.js'
+import fs from 'fs'
 
 /**
- * Helper: upload multiple local files to Cloudinary, then delete local files.
- * Returns an array of { url, public_id, originalname }.
+ * Helper: upload multiple local files to Cloudinary.
+ * Checks if file exists before attempting upload.
+ * Cleans up any remaining files on error.
  */
 const uploadManyAndCleanup = async (files = []) => {
   if (!Array.isArray(files) || files.length === 0) return []
   const results = []
+  const uploadedFiles = []
 
   try {
     for (const f of files) {
+      // Check if file still exists before upload
+      if (!fs.existsSync(f.path)) {
+        console.warn(`File already deleted: ${f.path}`)
+        continue
+      }
+
       const uploaded = await uploadOnCloudinary(f.path)
-      // Cleanup local file regardless of unlink outcome
-      try { await fs.unlink(f.path) } catch { /* ignore unlink errors */ }
       if (!uploaded?.url) {
         throw new Error('Cloud upload failed')
       }
+      
       results.push({
         url: uploaded.url,
         public_id: uploaded.public_id || null,
         originalname: f.originalname,
       })
+      uploadedFiles.push(f.path)
     }
     return results
-  } catch (err) {
-    // Best-effort cleanup for any files that still exist locally
-    await Promise.allSettled(files.map(f => fs.unlink(f.path)))
-    throw err
+  } catch (error) {
+    // Cleanup any remaining temp files on error
+    for (const f of files) {
+      try {
+        if (fs.existsSync(f.path)) {
+          fs.unlinkSync(f.path)
+        }
+      } catch (unlinkErr) {
+        console.error(`Failed to cleanup file ${f.path}:`, unlinkErr.message)
+      }
+    }
+    throw error
   }
 }
 
 /**
  * POST /listings/create
- * Requires multer to have processed files into req.files (field: listingPhotos).
- * Uploads images to Cloudinary and persists listing with remote URLs.
+ * Requires multer.fields([{ name: 'listingPhotos', maxCount: 10 }])
  */
 const createListing = asyncHandler(async (req, res) => {
   const {
@@ -49,7 +64,9 @@ const createListing = asyncHandler(async (req, res) => {
     streetAddress,
     aptSuite,
     city,
-    state,
+    // UI sends `province`; backend model in your sample used `state` in controller
+    province,
+    state, // accept either
     country,
     guestCount,
     bedroomCount,
@@ -63,7 +80,6 @@ const createListing = asyncHandler(async (req, res) => {
     price,
   } = req.body
 
-  // Basic validations
   if (!creator || !category || !type || !title || price == null) {
     throw new ApiError(400, 'Missing required fields: creator, category, type, title, price')
   }
@@ -77,10 +93,27 @@ const createListing = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'No listing photos uploaded')
   }
 
-  // Upload to Cloudinary and cleanup local files
+  // Upload to Cloudinary
   const uploadedPhotos = await uploadManyAndCleanup(listingPhotos)
 
-  // Create listing storing Cloudinary URLs (not local paths)
+  if (!uploadedPhotos.length) {
+    throw new ApiError(500, 'Failed to upload listing photos')
+  }
+
+  // Normalize amenities: if stringified JSON, parse; else pass through
+  let amenitiesValue = amenities
+  if (typeof amenities === 'string') {
+    try {
+      amenitiesValue = JSON.parse(amenities)
+    } catch {
+      // fallback to comma-split if user sent "a,b,c"
+      amenitiesValue = amenities.split(',').map((s) => s.trim()).filter(Boolean)
+    }
+  }
+
+  // Prefer state from req.body.state; otherwise map province -> state
+  const stateValue = state || province || ''
+
   const doc = await Listing.create({
     creator,
     category,
@@ -88,14 +121,14 @@ const createListing = asyncHandler(async (req, res) => {
     streetAddress,
     aptSuite,
     city,
-    state,
+    state: stateValue,
     country,
     guestCount,
     bedroomCount,
     bedCount,
     bathroomCount,
-    amenities,
-    listingPhotoPaths: uploadedPhotos.map(p => p.url),
+    amenities: amenitiesValue,
+    listingPhotoPaths: uploadedPhotos.map((p) => p.url),
     title,
     description,
     highlight,
@@ -103,12 +136,11 @@ const createListing = asyncHandler(async (req, res) => {
     price,
   })
 
-  // Populate creator to mirror original responses
   const newListing = await Listing.findById(doc._id).populate('creator')
 
   return res
-  .status(201)
-  .json(new ApiResponse(201, newListing, 'Listing created successfully'))
+    .status(201)
+    .json(new ApiResponse(201, newListing, 'Listing created successfully'))
 })
 
 /**

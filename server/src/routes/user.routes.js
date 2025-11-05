@@ -46,9 +46,9 @@ router.route("/avatar").patch(verifyJWT, upload.single("avatar"),updateUserAvata
 // router.route("/c/:username").get(verifyJWT,getUserChannelProfile)
 // router.route("/history").get(verifyJWT, getWatchHistory)
 
-router.route("/:username/trips").get(verifyJWT,getTripList)
-router.route("/:username/:listingId").patch(verifyJWT,addListingToWishlist)
-router.route("/:username/properties").get(verifyJWT, getPropertyList)
-router.route("/:username/reservations").get(verifyJWT, getReservationList)
+router.route("/:userId/trips").get(verifyJWT,getTripList)
+router.route("/:userId/:listingId").patch(verifyJWT,addListingToWishlist)
+router.route("/:userId/properties").get(verifyJWT, getPropertyList)
+router.route("/:userId/reservations").get(verifyJWT, getReservationList)
 
 export default router
