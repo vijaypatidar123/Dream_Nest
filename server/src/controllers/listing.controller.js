@@ -6,52 +6,21 @@ import { Listing } from '../models/listing.model.js'
 import { uploadOnCloudinary } from '../utils/cloudinary.js'
 import fs from 'fs'
 
-/**
- * Helper: upload multiple local files to Cloudinary.
- * Checks if file exists before attempting upload.
- * Cleans up any remaining files on error.
- */
-const uploadManyAndCleanup = async (files = []) => {
-  if (!Array.isArray(files) || files.length === 0) return []
-  const results = []
-  const uploadedFiles = []
+const uploadManyBuffers = async (files = []) => {
+  const results = [];
 
-  try {
-    for (const f of files) {
-      // Check if file still exists before upload
-      if (!fs.existsSync(f.path)) {
-        console.warn(`File already deleted: ${f.path}`)
-        continue
-      }
-
-      const uploaded = await uploadOnCloudinary(f.path)
-      if (!uploaded?.url) {
-        throw new Error('Cloud upload failed')
-      }
-      
-      results.push({
-        url: uploaded.url,
-        public_id: uploaded.public_id || null,
-        originalname: f.originalname,
-      })
-      uploadedFiles.push(f.path)
+  for (const file of files) {
+    const uploaded = await uploadOnCloudinary(file.buffer); // ✅ buffer instead of file.path
+    if (!uploaded?.secure_url) {
+      throw new Error("Cloud upload failed");
     }
-    return results
-  } catch (error) {
-    // Cleanup any remaining temp files on error
-    for (const f of files) {
-      try {
-        if (fs.existsSync(f.path)) {
-          fs.unlinkSync(f.path)
-        }
-      } catch (unlinkErr) {
-        console.error(`Failed to cleanup file ${f.path}:`, unlinkErr.message)
-      }
-    }
-    throw error
+    results.push({
+      url: uploaded.secure_url,
+      public_id: uploaded.public_id,
+    });
   }
-}
-
+  return results;
+};
 /**
  * POST /listings/create
  * Requires multer.fields([{ name: 'listingPhotos', maxCount: 10 }])
@@ -87,15 +56,18 @@ const createListing = asyncHandler(async (req, res) => {
     throw new ApiError(400, 'Invalid creator id format')
   }
 
-  // Files from multer
+  /* FIXED: Define listingPhotos from multer memory storage */
   const listingPhotos = req.files?.listingPhotos || []
   if (!listingPhotos.length) {
     throw new ApiError(400, 'No listing photos uploaded')
   }
+  // Files from multer
+  const uploadedPhotos = await uploadManyBuffers(listingPhotos); // Using buffer
+  if (!uploadedPhotos.length) {
+    throw new ApiError(500, "Failed to upload listing photos");
+  }
 
   // Upload to Cloudinary
-  const uploadedPhotos = await uploadManyAndCleanup(listingPhotos)
-
   if (!uploadedPhotos.length) {
     throw new ApiError(500, 'Failed to upload listing photos')
   }

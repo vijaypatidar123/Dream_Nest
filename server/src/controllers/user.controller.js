@@ -35,56 +35,47 @@ const registerUser = asyncHandler(async (req, res) => {
     // check for user creation
     // return res
 
-    const { fullName, email, username, password } = req.body
+    const { fullName, email, username, password } = req.body;
 
-    if (
-        [fullName, email, username, password].some((field) => field?.trim() === "")
-    ) {
-        throw new ApiError(400, "All field are required")
-    }
+  if ([fullName, email, username, password].some((f) => !f?.trim())) {
+    throw new ApiError(400, "All fields are required");
+  }
 
+  // Check if user exists
+  const existedUser = await User.findOne({ $or: [{ email }, { username }] });
+  if (existedUser) {
+    throw new ApiError(409, "User with email or username already exists");
+  }
 
+  // ✅ CHANGED: Get image from memory (buffer), not from disk path
+  const avatarBuffer = req.files?.avatar?.[0]?.buffer;
+  if (!avatarBuffer) {
+    throw new ApiError(400, "Avatar file is required");
+  }
 
-    const existedUser = await User.findOne({
-        $or: [{ username }, { email }]
-    })
+  // ✅ CHANGED: Upload to Cloudinary using buffer
+  const uploadedAvatar = await uploadOnCloudinary(avatarBuffer);
+  if (!uploadedAvatar?.secure_url) {
+    throw new ApiError(500, "Failed to upload avatar to Cloudinary");
+  }
 
-    if (existedUser) {
-        throw new ApiError(409, "User with email or username already exists")
-    }
+  // Create user in database
+  const user = await User.create({
+    fullName,
+    email,
+    username: username.toLowerCase(),
+    password,
+    avatar: uploadedAvatar.secure_url, // ✅ Cloudinary image URL
+  });
 
-    const avatarLocalPath = req.files?.avatar[0]?.path;
+  const createdUser = await User.findById(user._id).select("-password -refreshToken");
+  if (!createdUser) {
+    throw new ApiError(500, "Something went wrong while registering the user");
+  }
 
-
-    if (!avatarLocalPath) {
-        throw new ApiError(400, "Avatar file is required")
-    }
-
-    const avatar = await uploadOnCloudinary(avatarLocalPath)
-
-    if (!avatar) {
-        throw new ApiError(400, "Avatar file is required")
-    }
-
-    const user = await User.create({
-        fullName,
-        avatar: avatar.url,
-        email,
-        password,
-        username: username.toLowerCase()
-    })
-
-    const createdUser = await User.findById(user._id).select(
-        "-password -refreshToken"
-    )
-
-    if (!createdUser) {
-        throw new ApiError(500, "Something went wrong while registering the user")
-    }
-
-    return res.status(201).json(
-        new ApiResponse(200, createdUser, "User registered Successfully")
-    )
+  return res
+    .status(201)
+    .json(new ApiResponse(200, createdUser, "User registered successfully"));
 })
 
 const loginUser = asyncHandler(async (req, res) => {
